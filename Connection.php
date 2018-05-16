@@ -314,6 +314,8 @@ class Connection implements ConnectionInterface
      */
     public function select($query, $bindings = [], $useReadPdo = true)
     {
+    	var_dump($query);
+    	die();
         return $this->run($query, $bindings, function ($query, $bindings) use ($useReadPdo) {
             if ($this->pretending()) {
                 return [];
