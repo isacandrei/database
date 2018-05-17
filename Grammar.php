@@ -58,7 +58,6 @@ abstract class Grammar
         if (strpos(strtolower($value), ' as ') !== false) {
             return $this->wrapAliasedValue($value, $prefixAlias);
         }
-
         return $this->wrapSegments(explode('.', $value));
     }
 
@@ -93,11 +92,13 @@ abstract class Grammar
      */
     protected function wrapSegments($segments)
     {
-        return collect($segments)->map(function ($segment, $key) use ($segments) {
-            return $key == 0 && count($segments) > 1
-                            ? $this->wrapTable($segment)
-                            : $this->wrapValue($segment);
+    	$result = collect($segments)->map(function ($segment, $key) use ($segments) {
+
+	        return $key == 0 && count($segments) > 1
+		        ? $this->wrapTable($segment)
+		        : $this->wrapValue($segment);
         })->implode('.');
+        return $result;
     }
 
     /**
@@ -108,7 +109,7 @@ abstract class Grammar
      */
     protected function wrapValue($value)
     {
-        if ($value !== '*') {
+        if ($value !== '*' && !str_contains($value, "#__")) {
             return '"'.str_replace('"', '""', $value).'"';
         }
 

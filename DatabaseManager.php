@@ -2,6 +2,7 @@
 
 namespace Illuminate\Database;
 
+use Joomla\Database\DatabaseFactory;
 use PDO;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Str;
@@ -70,9 +71,20 @@ class DatabaseManager implements ConnectionResolverInterface
         // provided in the application. Once we've created the connections we will
         // set the "fetch mode" for PDO which determines the query return types.
         if (! isset($this->connections[$name])) {
-            $this->connections[$name] = $this->configure(
-                $this->makeConnection($database), $type
-            );
+	        $config = $this->configuration($name);
+                $driver = $config['driver'];
+		$options = array(
+				'host' => $config['host'],
+				'user' => $config['username'],
+				'password' => $config['password'],
+				'prefix' => $config['prefix'],
+				'database' => $config['database'],
+			);
+
+                $dbFactory = new DatabaseFactory;
+                $db = $dbFactory->getDriver($driver, $options);
+
+                $this->connections[$name] = new Connection($db, $config['database'], $config['prefix'], $config);
         }
 
         return $this->connections[$name];
@@ -164,9 +176,9 @@ class DatabaseManager implements ConnectionResolverInterface
         // Here we'll set a reconnector callback. This reconnector can be any callable
         // so we will set a Closure to reconnect from this manager with the name of
         // the connection, which will allow us to reconnect from the connections.
-        $connection->setReconnector(function ($connection) {
-            $this->reconnect($connection->getName());
-        });
+//        $connection->setReconnector(function ($connection) {
+//            $this->reconnect($connection->getName());
+//        });
 
         return $connection;
     }

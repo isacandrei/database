@@ -2,7 +2,6 @@
 
 namespace Illuminate\Database;
 
-use PDO;
 use Closure;
 use Exception;
 use PDOStatement;
@@ -12,7 +11,6 @@ use Illuminate\Support\Arr;
 use Illuminate\Database\Query\Expression;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Events\QueryExecuted;
-use Doctrine\DBAL\Connection as DoctrineConnection;
 use Illuminate\Database\Query\Processors\Processor;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Database\Schema\Builder as SchemaBuilder;
@@ -25,18 +23,11 @@ class Connection implements ConnectionInterface
         Concerns\ManagesTransactions;
 
     /**
-     * The active PDO connection.
+     * The database driver
      *
-     * @var \PDO|\Closure
+     * @var \Joomla\Database\DatabaseDriver
      */
-    protected $pdo;
-
-    /**
-     * The active PDO connection used for reads.
-     *
-     * @var \PDO|\Closure
-     */
-    protected $readPdo;
+    protected $db;
 
     /**
      * The name of the connected database.
@@ -58,13 +49,6 @@ class Connection implements ConnectionInterface
      * @var array
      */
     protected $config = [];
-
-    /**
-     * The reconnector instance for the connection.
-     *
-     * @var callable
-     */
-    protected $reconnector;
 
     /**
      * The query grammar implementation.
@@ -93,13 +77,6 @@ class Connection implements ConnectionInterface
      * @var \Illuminate\Contracts\Events\Dispatcher
      */
     protected $events;
-
-    /**
-     * The default fetch mode of the connection.
-     *
-     * @var int
-     */
-    protected $fetchMode = PDO::FETCH_OBJ;
 
     /**
      * The number of active transactions.
@@ -137,13 +114,6 @@ class Connection implements ConnectionInterface
     protected $pretending = false;
 
     /**
-     * The instance of Doctrine connection.
-     *
-     * @var \Doctrine\DBAL\Connection
-     */
-    protected $doctrineConnection;
-
-    /**
      * The connection resolvers.
      *
      * @var array
@@ -153,15 +123,15 @@ class Connection implements ConnectionInterface
     /**
      * Create a new database connection instance.
      *
-     * @param  \PDO|\Closure     $pdo
+     * @param  \Joomla\Database\DatabaseDriver
      * @param  string   $database
      * @param  string   $tablePrefix
      * @param  array    $config
      * @return void
      */
-    public function __construct($pdo, $database = '', $tablePrefix = '', array $config = [])
+    public function __construct($db, $database = '', $tablePrefix = '', array $config = [])
     {
-        $this->pdo = $pdo;
+        $this->db = $db;
 
         // First we will setup the default properties. We keep track of the DB
         // name we are connected to since it is needed when some reflective
@@ -178,6 +148,7 @@ class Connection implements ConnectionInterface
         $this->useDefaultQueryGrammar();
 
         $this->useDefaultPostProcessor();
+
     }
 
     /**
@@ -314,23 +285,10 @@ class Connection implements ConnectionInterface
      */
     public function select($query, $bindings = [], $useReadPdo = true)
     {
-        return $this->run($query, $bindings, function ($query, $bindings) use ($useReadPdo) {
-            if ($this->pretending()) {
-                return [];
-            }
+        var_dump($query);
+        $iterator = $this->db->setQuery($query)->getIterator();
 
-            // For select statements, we'll simply execute the query and return an array
-            // of the database result set. Each element in the array will be a single
-            // row from the database table, and will either be an array or objects.
-            $statement = $this->prepared($this->getPdoForSelect($useReadPdo)
-                              ->prepare($query));
-
-            $this->bindValues($statement, $this->prepareBindings($bindings));
-
-            $statement->execute();
-
-            return $statement->fetchAll();
-        });
+        return $iterator;
     }
 
     /**
@@ -351,7 +309,7 @@ class Connection implements ConnectionInterface
             // First we will create a statement for the query. Then, we will set the fetch
             // mode and prepare the bindings for the query. Once that's done we will be
             // ready to execute the query against the database and return the cursor.
-            $statement = $this->prepared($this->getPdoForSelect($useReadPdo)
+            $statement = $this->prepared($this->getDbForSelect($useReadPdo)
                               ->prepare($query));
 
             $this->bindValues(
@@ -386,17 +344,6 @@ class Connection implements ConnectionInterface
         ));
 
         return $statement;
-    }
-
-    /**
-     * Get the PDO connection to use for a select query.
-     *
-     * @param  bool  $useReadPdo
-     * @return \PDO
-     */
-    protected function getPdoForSelect($useReadPdo = true)
-    {
-        return $useReadPdo ? $this->getReadPdo() : $this->getPdo();
     }
 
     /**
@@ -449,7 +396,7 @@ class Connection implements ConnectionInterface
                 return true;
             }
 
-            $statement = $this->getPdo()->prepare($query);
+            $statement = $this->getDb()->prepare($query);
 
             $this->bindValues($statement, $this->prepareBindings($bindings));
 
@@ -476,7 +423,7 @@ class Connection implements ConnectionInterface
             // For update or delete statements, we want to get the number of rows affected
             // by the statement and return that back to the developer. We'll first need
             // to execute the statement and then we'll use PDO to fetch the affected.
-            $statement = $this->getPdo()->prepare($query);
+            $statement = $this->getDb()->prepare($query);
 
             $this->bindValues($statement, $this->prepareBindings($bindings));
 
@@ -504,7 +451,7 @@ class Connection implements ConnectionInterface
             }
 
             $this->recordsHaveBeenModified(
-                $change = $this->getPdo()->exec($query) !== false
+                $change = $this->getDb()->exec($query) !== false
             );
 
             return $change;
@@ -763,7 +710,7 @@ class Connection implements ConnectionInterface
      */
     protected function reconnectIfMissingConnection()
     {
-        if (is_null($this->pdo)) {
+        if (is_null($this->db)) {
             $this->reconnect();
         }
     }
@@ -775,7 +722,7 @@ class Connection implements ConnectionInterface
      */
     public function disconnect()
     {
-        $this->setPdo(null)->setReadPdo(null);
+        $this->setDb(null);
     }
 
     /**
@@ -860,126 +807,33 @@ class Connection implements ConnectionInterface
         return class_exists('Doctrine\DBAL\Connection');
     }
 
-    /**
-     * Get a Doctrine Schema Column instance.
-     *
-     * @param  string  $table
-     * @param  string  $column
-     * @return \Doctrine\DBAL\Schema\Column
-     */
-    public function getDoctrineColumn($table, $column)
-    {
-        $schema = $this->getDoctrineSchemaManager();
 
-        return $schema->listTableDetails($table)->getColumn($column);
+    /**
+     * Get the current DatabaseDriver
+     *
+     * @return \Joomla\Database\DatabaseDriver
+     */
+    public function getDb()
+    {
+        return $this->db;
     }
 
-    /**
-     * Get the Doctrine DBAL schema manager for the connection.
-     *
-     * @return \Doctrine\DBAL\Schema\AbstractSchemaManager
-     */
-    public function getDoctrineSchemaManager()
-    {
-        return $this->getDoctrineDriver()->getSchemaManager($this->getDoctrineConnection());
-    }
 
     /**
-     * Get the Doctrine DBAL database connection instance.
+     * Set the Db connection.
      *
-     * @return \Doctrine\DBAL\Connection
-     */
-    public function getDoctrineConnection()
-    {
-        if (is_null($this->doctrineConnection)) {
-            $driver = $this->getDoctrineDriver();
-
-            $this->doctrineConnection = new DoctrineConnection([
-                'pdo' => $this->getPdo(),
-                'dbname' => $this->getConfig('database'),
-                'driver' => $driver->getName(),
-            ], $driver);
-        }
-
-        return $this->doctrineConnection;
-    }
-
-    /**
-     * Get the current PDO connection.
-     *
-     * @return \PDO
-     */
-    public function getPdo()
-    {
-        if ($this->pdo instanceof Closure) {
-            return $this->pdo = call_user_func($this->pdo);
-        }
-
-        return $this->pdo;
-    }
-
-    /**
-     * Get the current PDO connection used for reading.
-     *
-     * @return \PDO
-     */
-    public function getReadPdo()
-    {
-        if ($this->transactions > 0) {
-            return $this->getPdo();
-        }
-
-        if ($this->getConfig('sticky') && $this->recordsModified) {
-            return $this->getPdo();
-        }
-
-        if ($this->readPdo instanceof Closure) {
-            return $this->readPdo = call_user_func($this->readPdo);
-        }
-
-        return $this->readPdo ?: $this->getPdo();
-    }
-
-    /**
-     * Set the PDO connection.
-     *
-     * @param  \PDO|\Closure|null  $pdo
+     * @param  \Joomla\Database\DatabaseDriver
      * @return $this
      */
-    public function setPdo($pdo)
+    public function setDb($db)
     {
         $this->transactions = 0;
 
-        $this->pdo = $pdo;
+        $this->db = $db;
 
         return $this;
     }
 
-    /**
-     * Set the PDO connection used for reading.
-     *
-     * @param  \PDO|\Closure|null  $pdo
-     * @return $this
-     */
-    public function setReadPdo($pdo)
-    {
-        $this->readPdo = $pdo;
-
-        return $this;
-    }
-
-    /**
-     * Set the reconnect instance on the connection.
-     *
-     * @param  callable  $reconnector
-     * @return $this
-     */
-    public function setReconnector(callable $reconnector)
-    {
-        $this->reconnector = $reconnector;
-
-        return $this;
-    }
 
     /**
      * Get the database connection name.
@@ -1000,16 +854,6 @@ class Connection implements ConnectionInterface
     public function getConfig($option = null)
     {
         return Arr::get($this->config, $option);
-    }
-
-    /**
-     * Get the PDO driver name.
-     *
-     * @return string
-     */
-    public function getDriverName()
-    {
-        return $this->getConfig('driver');
     }
 
     /**

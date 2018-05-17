@@ -1098,6 +1098,7 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
      */
     public function getConnection()
     {
+
         return static::resolveConnection($this->getConnectionName());
     }
 
@@ -1178,7 +1179,7 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
                 '\\', '', Str::snake(Str::plural(class_basename($this)))
             );
         }
-
+//        $this->table = "#__" . $this->table;
         return $this->table;
     }
 
